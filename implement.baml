@@ -1,13 +1,12 @@
 config:
   input: csv
-  path: "<INSERT_PATH_TO_CSV_HERE>"  # Replace this with your actual CSV file path
-  output: categorized_captions.csv
+  path: "<INSERT_PATH_TO_CSV_HERE>"  # Replace with your CSV path
+  output: categorized_files.csv
 
 vars:
-  model_name: google/gemma-3-4b  # You can change this to any model loaded in LM Studio
+  model_name: google/gemma-3-4b  # Configurable
   lmstudio_api: http://localhost:1234/v1/chat
 
-  # Define your allowed categories
   categories: [
     "Animals",
     "Natural soundscapes & water sounds",
@@ -16,22 +15,43 @@ vars:
     "Exterior/urban noises"
   ]
 
-tasks:
-  - name: categorize_caption
-    for_each: row in data
-    input: |
-      You are an expert sound analyst. Given the following caption of an audio clip:
-      
-      "{{ row.generated_captions }}"
+# Group captions by filename before sending to the LLM
+preprocess:
+  - name: group_captions_by_file
+    run: |
+      from collections import defaultdict
 
-      Please classify the sound into one of the following categories:
+      grouped = defaultdict(list)
+      for row in data:
+          grouped[row["filename"]].append(row["generated_captions"])
+
+      grouped_data = []
+      for filename, captions in grouped.items():
+          joined_captions = "\n".join(f"- {caption}" for caption in captions)
+          grouped_data.append({
+              "filename": filename,
+              "joined_captions": joined_captions
+          })
+
+      return grouped_data
+
+tasks:
+  - name: classify_grouped_captions
+    for_each: row in group_captions_by_file
+    input: |
+      You are an expert sound analyst. A set of audio captions (from different segments of the same file) is provided below.
+
+      Captions:
+      {{ row.joined_captions }}
+
+      Based on the overall content of these captions, classify the **entire audio file** into one of the following categories:
       - Animals
       - Natural soundscapes & water sounds
       - Human non-speech sounds
       - Interior/domestic sounds
       - Exterior/urban noises
 
-      Only respond with the exact category name from the list above.
+      Only respond with the exact category name from the list.
     model:
       provider: openai
       model: "{{ model_name }}"
