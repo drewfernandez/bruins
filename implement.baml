@@ -1,59 +1,40 @@
-config:
-  input: csv
-  path: "<INSERT_PATH_TO_CSV_HERE>"  # Replace with your CSV path
-  output: categorized_files.csv
+import csv
+from collections import defaultdict
+from baml import run_function  # Make sure BAML is installed in your Python environment
 
-vars:
-  model_name: google/gemma-3-4b  # Configurable
-  lmstudio_api: http://localhost:1234/v1/chat
+# --- Config ---
+CSV_PATH = "your_input.csv"  # Replace with your CSV path
+BAML_FUNCTION_NAME = "LabelAudioScene"
 
-  categories: [
-    "Animals",
-    "Natural soundscapes & water sounds",
-    "Human non-speech sounds",
-    "Interior/domestic sounds",
-    "Exterior/urban noises"
-  ]
+# --- Step 1: Read and group captions by file_name ---
+grouped_captions = defaultdict(list)
 
-# Group captions by filename before sending to the LLM
-preprocess:
-  - name: group_captions_by_file
-    run: |
-      from collections import defaultdict
+with open(CSV_PATH, newline='', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        filename = row["file_name"]
+        caption = row["generated_captions"]
+        grouped_captions[filename].append(caption)
 
-      grouped = defaultdict(list)
-      for row in data:
-          grouped[row["filename"]].append(row["generated_captions"])
+# --- Step 2: Call BAML function for each file ---
+results = []
 
-      grouped_data = []
-      for filename, captions in grouped.items():
-          joined_captions = "\n".join(f"- {caption}" for caption in captions)
-          grouped_data.append({
-              "filename": filename,
-              "joined_captions": joined_captions
-          })
+for filename, captions in grouped_captions.items():
+    print(f"Classifying {filename}...")
 
-      return grouped_data
+    # Run the BAML function
+    result = run_function(BAML_FUNCTION_NAME, {
+        "window_labels": captions
+    })
 
-tasks:
-  - name: classify_grouped_captions
-    for_each: row in group_captions_by_file
-    input: |
-      You are an expert sound analyst. A set of audio captions (from different segments of the same file) is provided below.
+    results.append({
+        "file_name": filename,
+        "category": result["category"],
+        "confidence": result["confidence"],
+        "rational": result["rational"]
+    })
 
-      Captions:
-      {{ row.joined_captions }}
-
-      Based on the overall content of these captions, classify the **entire audio file** into one of the following categories:
-      - Animals
-      - Natural soundscapes & water sounds
-      - Human non-speech sounds
-      - Interior/domestic sounds
-      - Exterior/urban noises
-
-      Only respond with the exact category name from the list.
-    model:
-      provider: openai
-      model: "{{ model_name }}"
-      base_url: "{{ lmstudio_api }}"
-    output: row.category
+# --- Step 3: Print or save results ---
+print("\nClassification Results:")
+for r in results:
+    print(r)
